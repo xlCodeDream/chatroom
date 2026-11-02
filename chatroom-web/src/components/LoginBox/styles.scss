@@ -1,0 +1,60 @@
+:global(.login-box-modal) {
+  border-radius: 8px !important;
+}
+
+:global(.login-box-modal .el-dialog__header) {
+  padding: 0;
+}
+
+:global(.login-box-modal .el-dialog__headerbtn) {
+  z-index: 5;
+}
+
+.login-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.login-logo {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  object-fit: cover;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  margin-bottom: 16px;
+}
+
+.login-slogan {
+  margin-top: 12px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: var(--font-light);
+}
+
+.login-form {
+  width: 100%;
+  padding: 0 20px;
+}
+
+.login-input {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.login-buttons {
+  display: flex;
+  gap: 12px;
+
+  .login-btn {
+    flex: 1;
+    height: 40px;
+    border-radius: 6px;
+
+    &.register-btn {
+      background: transparent;
+      color: var(--font-secondary);
+      border-color: var(--border-color);
+    }
+  }
+}

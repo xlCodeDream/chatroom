@@ -1,0 +1,29 @@
+.room-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 50px;
+  padding: 0 10px;
+  background: var(--background-mask);
+  border-radius: 8px 8px 0 0;
+
+  .name {
+    margin-right: 8px;
+  }
+
+  .room-id {
+    font-size: 12px;
+    color: var(--font-gray);
+    opacity: 0.6;
+    margin-right: auto;
+  }
+
+  .setting {
+    font-size: 13px;
+    cursor: pointer;
+
+    &:hover {
+      color: var(--hover-primary);
+    }
+  }
+}

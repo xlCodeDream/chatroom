@@ -1,0 +1,237 @@
+import { computed, reactive, ref } from 'vue'
+import apis from '@/services/apis'
+import { defineStore } from 'pinia'
+import { useGlobalStore } from '@/stores/global'
+import type { GroupDetailReq, UserItem } from '@/services/types'
+import { pageSize, useChatStore } from './chat'
+import cloneDeep from 'lodash/cloneDeep'
+import { OnlineEnum, RoleEnum } from '@/enums'
+import { uniqueUserList } from '@/utils/unique'
+import { useCachedStore } from '@/stores/cached'
+import { useUserStore } from '@/stores/user'
+
+const sorAction = (pre: UserItem, next: UserItem) => {
+  if (pre.activeStatus === OnlineEnum.ONLINE && next.activeStatus === OnlineEnum.ONLINE) {
+    return next.lastOptTime < pre.lastOptTime ? -1 : 1
+  } else if (pre.activeStatus !== OnlineEnum.ONLINE && next.activeStatus !== OnlineEnum.ONLINE) {
+    return next.lastOptTime < pre.lastOptTime ? -1 : 1
+  } else if (pre.activeStatus === OnlineEnum.ONLINE && next.activeStatus !== OnlineEnum.ONLINE) {
+    return -1
+  } else if (pre.activeStatus !== OnlineEnum.ONLINE && next.activeStatus === OnlineEnum.ONLINE) {
+    return 1
+  } else {
+    return next.lastOptTime < pre.lastOptTime ? -1 : 1
+  }
+}
+
+export const useGroupStore = defineStore('group', () => {
+  const cachedStore = useCachedStore()
+  const globalStore = useGlobalStore()
+  const userStore = useUserStore()
+  const chatStore = useChatStore()
+  // 消息列表
+  const userList = ref<UserItem[]>([])
+  const userListOptions = reactive({ isLast: false, loading: true, cursor: '' })
+  const currentRoomId = computed(() => globalStore.currentSession.roomId)
+  /**
+   * 获取当前群主ID
+   */
+  const currentLordId = computed(() => {
+    const list = userList.value.filter((member) => member.roleId === RoleEnum.LORD)
+    if (list.length) {
+      return list[0]?.uid
+    }
+    return -99
+  })
+  /**
+   * 获取当前管理员ID列表
+   */
+  const adminUidList = computed(() => {
+    return userList.value
+      .filter((member) => member.roleId === RoleEnum.ADMIN)
+      .map((member) => member.uid)
+  })
+  /**
+   * 获取管理员基本信息列表
+   */
+  const adminList = computed(() => {
+    return cachedStore.filterUsersByUidList(adminUidList.value)
+  })
+  /**
+   * 获取管理员基本信息列表
+   */
+  const memberList = computed(() => {
+    const memberInfoList = cachedStore.filterUsersByUidList(userList.value.map((item) => item.uid))
+    return memberInfoList.map((member) => {
+      if (adminUidList.value.includes(member.uid)) {
+        return {
+          ...member,
+          roleId: RoleEnum.ADMIN,
+        }
+      } else if (member.uid === currentLordId.value) {
+        return {
+          ...member,
+          roleId: RoleEnum.LORD,
+        }
+      }
+      return member
+    })
+  })
+  const countInfo = ref<GroupDetailReq>({
+    avatar: '',
+    groupName: '',
+    onlineNum: 0,
+    role: 0,
+    roomId: currentRoomId.value,
+  })
+
+  // 移动端控制显隐
+  const showGroupList = ref(false)
+
+  // 获取群成员
+  const getGroupUserList = async (refresh = false) => {
+    const data = await apis
+      .getGroupList({
+        params: {
+          pageSize,
+          cursor: refresh ? undefined : userListOptions.cursor,
+          roomId: currentRoomId.value,
+        },
+      })
+      .send()
+    if (!data) return
+    const tempNew = cloneDeep(
+      uniqueUserList(refresh ? data.list : [...data.list, ...userList.value]),
+    )
+    tempNew.sort(sorAction)
+    userList.value = tempNew
+    userListOptions.cursor = data.cursor
+    userListOptions.isLast = data.isLast
+    userListOptions.loading = false
+
+    /** 收集需要请求用户详情的 uid */
+    const uidCollectYet: Set<number> = new Set() // 去重用
+    data.list?.forEach((user) => uidCollectYet.add(user.uid))
+    // 获取用户信息缓存
+    cachedStore.getBatchUserInfo([...uidCollectYet])
+  }
+
+  // 获取群成员数量统计
+  const getCountStatistic = async () => {
+    const data = await apis.groupDetail({ id: currentRoomId.value }).send()
+    countInfo.value = data
+  }
+
+  // 加载更多群成员
+  const loadMore = async () => {
+    if (userListOptions.isLast) return
+    await getGroupUserList()
+  }
+
+  // 更新用户在线状态
+  const batchUpdateUserStatus = (items: UserItem[]) => {
+    console.log('[batchUpdateUserStatus] 收到变更列表:', items?.length, '条')
+    console.log(
+      '[batchUpdateUserStatus] 变更详情:',
+      items?.map((i) => ({ uid: i.uid, name: i.name, activeStatus: i.activeStatus })),
+    )
+    const tempNew = cloneDeep(userList.value)
+    console.log('[batchUpdateUserStatus] 当前 userList 人数:', tempNew.length)
+    for (let index = 0, len = items.length; index < len; index++) {
+      const curUser = items[index]
+      const findIndex = tempNew.findIndex((item) => item.uid === curUser.uid)
+      if (findIndex > -1) {
+        console.log(
+          '[batchUpdateUserStatus] 更新用户',
+          curUser.uid,
+          '状态从',
+          tempNew[findIndex].activeStatus,
+          '→',
+          curUser.activeStatus,
+        )
+        tempNew[findIndex].activeStatus = curUser.activeStatus
+      } else {
+        console.log(
+          '[batchUpdateUserStatus] ⚠️ 用户',
+          curUser.uid,
+          '不在当前 userList 中（非当前群成员，忽略）',
+        )
+      }
+    }
+    tempNew.sort(sorAction)
+    userList.value = tempNew
+    console.log('[batchUpdateUserStatus] 更新完成, userList:', userList.value.length, '人')
+  }
+
+  // 过滤掉小黑子
+  const filterUser = (uid: number) => {
+    if (typeof uid !== 'number') return
+    userList.value = userList.value.filter((item) => item.uid !== uid)
+  }
+
+  /**
+   * 添加管理员
+   * @param uidList
+   */
+  const addAdmin = async (uidList: number[]) => {
+    await apis.addAdmin({ roomId: currentRoomId.value, uidList }).send()
+
+    // 更新群成员列表
+    userList.value.forEach((user) => {
+      if (uidList.includes(user.uid)) {
+        user.roleId = RoleEnum.ADMIN
+      }
+    })
+  }
+
+  /**
+   * 撤销管理员
+   * @param uidList
+   */
+  const revokeAdmin = async (uidList: number[]) => {
+    await apis.revokeAdmin({ roomId: currentRoomId.value, uidList }).send()
+
+    // 更新群成员列表
+    userList.value.forEach((user) => {
+      if (uidList.includes(user.uid)) {
+        user.roleId = RoleEnum.NORMAL
+      }
+    })
+  }
+
+  /**
+   * 退出群聊
+   */
+  const exitGroup = async () => {
+    await apis.exitGroup({ roomId: currentRoomId.value }).send()
+
+    // 更新群成员列表
+    const index = userList.value.findIndex((user) => user.uid === userStore.userInfo.uid)
+    userList.value.splice(index, 1)
+
+    // 更新会话列表
+    chatStore.removeContact(currentRoomId.value)
+
+    // 切换为第一个会话
+    globalStore.currentSession.roomId = chatStore.sessionList[0].roomId
+  }
+
+  return {
+    userList,
+    userListOptions,
+    loadMore,
+    getGroupUserList,
+    getCountStatistic,
+    currentLordId,
+    countInfo,
+    batchUpdateUserStatus,
+    showGroupList,
+    filterUser,
+    adminUidList,
+    adminList,
+    memberList,
+    addAdmin,
+    revokeAdmin,
+    exitGroup,
+  }
+})
